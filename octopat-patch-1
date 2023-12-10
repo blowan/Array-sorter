@@ -1,0 +1,86 @@
+// main.go
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+)
+
+func main() {
+	http.HandleFunc("/process-single", processSingle)
+	http.HandleFunc("/process-concurrent", processConcurrent)
+
+	log.Fatal(http.ListenAndServe(":8000", nil))
+}
+
+func processSingle(w http.ResponseWriter, r *http.Request) {
+	var requestData map[string][][]int
+	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	startTime := time.Now()
+
+	var sortedArrays [][]int
+	for _, arr := range requestData["to_sort"] {
+		sort.Ints(arr)
+		sortedArrays = append(sortedArrays, arr)
+	}
+
+	elapsedTime := time.Since(startTime)
+
+	response := map[string]interface{}{
+		"sorted_arrays": sortedArrays,
+		"time_ns":       elapsedTime.Nanoseconds(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func processConcurrent(w http.ResponseWriter, r *http.Request) {
+	var requestData map[string][][]int
+	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	startTime := time.Now()
+
+	var sortedArrays [][]int
+	var wg sync.WaitGroup
+	resultCh := make(chan []int)
+
+	for _, arr := range requestData["to_sort"] {
+		wg.Add(1)
+		go func(a []int) {            
+			defer wg.Done()
+			sort.Ints(a)
+			resultCh <- a
+		}(arr)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for result := range resultCh {
+		sortedArrays = append(sortedArrays, result)
+	}
+
+	elapsedTime := time.Since(startTime)
+
+	response := map[string]interface{}{
+		"sorted_arrays": sortedArrays,
+		"time_ns":       elapsedTime.Nanoseconds(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
